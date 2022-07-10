@@ -15,8 +15,13 @@ import (
 const RandomIntegerServiceUrl = "https://www.random.org/integers/"
 
 type RandomMeanQueryParams struct {
-	Requests uint `form:"requests" binding:"required,gte=0,lte=1000"`
+	Requests int  `form:"requests" binding:"required,gte=0,lte=1000"`
 	Length   uint `form:"length" binding:"required"`
+}
+
+type StandardDeviation struct {
+	Stddev float64 `json:"stddev"`
+	Data   []int   `json:"data"`
 }
 
 func convertPlainResponseToIntArray(responseBody []byte) ([]int, error) {
@@ -67,6 +72,30 @@ func calculateStandardDeviation(numbers []int) float64 {
 	return math.Sqrt(standardDeviation / float64(len(numbers)))
 }
 
+func getNumbers(baseUrl *url.URL, defaultChannel chan StandardDeviation, errorChannel chan error) {
+	httpClient := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	response, err := httpClient.Get(baseUrl.String())
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	//defer response.Body.Close()
+	body, _ := ioutil.ReadAll(response.Body)
+	numbers, _ := convertPlainResponseToIntArray(body)
+
+	defaultChannel <- StandardDeviation{calculateStandardDeviation(numbers), numbers}
+
+	//if response.StatusCode != 200 {
+	//	c.JSON(http.StatusServiceUnavailable, gin.H{
+	//		"Error": "Random Org is not available",
+	//	})
+	//}
+}
+
 func randomMeanHandler(c *gin.Context) {
 	randomMeanQueryParams := RandomMeanQueryParams{}
 	if err := c.ShouldBindQuery(&randomMeanQueryParams); err != nil {
@@ -77,36 +106,32 @@ func randomMeanHandler(c *gin.Context) {
 		return
 	}
 
-	httpClient := &http.Client{
-		Timeout: time.Second * 10,
-	}
-
 	baseUrl, _ := url.Parse(RandomIntegerServiceUrl)
 
 	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
 
-	response, err := httpClient.Get(baseUrl.String())
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
-	if response.StatusCode != 200 {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"Error": "Random Org is not available",
-		})
+	defaultChannel := make(chan StandardDeviation)
+	errorChannel := make(chan error)
+
+	for i := 0; i < randomMeanQueryParams.Requests; i++ {
+		go getNumbers(baseUrl, defaultChannel, errorChannel)
 	}
 
-	//defer response.Body.Close()
-	body, _ := ioutil.ReadAll(response.Body)
+	var standardDeviations []StandardDeviation
+	var allNumbers []int
 
-	numbers, _ := convertPlainResponseToIntArray(body)
+	for i := 0; i < randomMeanQueryParams.Requests; i++ {
+		stddev := <-defaultChannel
+		standardDeviations = append(standardDeviations, stddev)
+		allNumbers = append(allNumbers, stddev.Data...)
+	}
 
-	standardDeviation := calculateStandardDeviation(numbers)
+	standardDeviations = append(
+		standardDeviations,
+		StandardDeviation{calculateStandardDeviation(allNumbers), allNumbers},
+	)
 
-	c.JSON(http.StatusOK, gin.H{
-		"stddev": math.Floor(standardDeviation*100) / 100,
-		"data":   numbers,
-	})
+	c.JSON(http.StatusOK, standardDeviations)
 }
 
 func main() {
