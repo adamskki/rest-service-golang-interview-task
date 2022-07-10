@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 	"io/ioutil"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -15,7 +16,7 @@ const RandomIntegerServiceUrl = "https://www.random.org/integers/"
 
 type RandomMeanQueryParams struct {
 	Requests uint `form:"requests" binding:"required,gte=0,lte=1000"`
-	Length   uint `form:"length" binding:"required,gte=0,lte=10"`
+	Length   uint `form:"length" binding:"required"`
 }
 
 func convertPlainResponseToIntArray(responseBody []byte) ([]int, error) {
@@ -84,18 +85,26 @@ func randomMeanHandler(c *gin.Context) {
 
 	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
 
-	response, _ := httpClient.Get(baseUrl.String())
+	response, err := httpClient.Get(baseUrl.String())
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	if response.StatusCode != 200 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"Error": "Random Org is not available",
+		})
+	}
 
 	//defer response.Body.Close()
 	body, _ := ioutil.ReadAll(response.Body)
-	numbers, err := convertPlainResponseToIntArray(body)
-	if err != nil {
-		c.String(http.StatusBadGateway, string("NIE DZIALA"))
-		return
-	}
+
+	numbers, _ := convertPlainResponseToIntArray(body)
+
 	standardDeviation := calculateStandardDeviation(numbers)
+
 	c.JSON(http.StatusOK, gin.H{
-		"sttdev": math.Floor(standardDeviation*100) / 100,
+		"stddev": math.Floor(standardDeviation*100) / 100,
 		"data":   numbers,
 	})
 }
