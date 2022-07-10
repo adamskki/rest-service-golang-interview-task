@@ -2,12 +2,68 @@ package main
 
 import (
 	"github.com/gin-gonic/gin"
+	"io/ioutil"
+	"math"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 )
+
+const RandomIntegerServiceUrl = "https://www.random.org/integers/"
 
 type RandomMeanQueryParams struct {
 	Requests uint `form:"requests" binding:"required,gte=0,lte=1000"`
 	Length   uint `form:"length" binding:"required,gte=0,lte=10"`
+}
+
+func convertPlainResponseToIntArray(responseBody []byte) ([]int, error) {
+	var integersArray []int
+	for _, num := range strings.Fields(string(responseBody)) {
+		value, err := strconv.Atoi(num)
+		if err != nil {
+			return nil, err
+		}
+		integersArray = append(integersArray, value)
+	}
+	return integersArray, nil
+}
+
+func addRequiredQueryParamsToUrl(baseUrl *url.URL, numLength string) {
+	queryParams := url.Values{}
+	queryParams.Add("num", numLength)
+	queryParams.Add("min", "1")
+	queryParams.Add("max", "1000")
+	queryParams.Add("col", "1")
+	queryParams.Add("base", "10")
+	queryParams.Add("format", "plain")
+
+	baseUrl.RawQuery = queryParams.Encode()
+}
+
+func calculateMean(numbers []int) float64 {
+	var sum int
+
+	if len(numbers) == 0 {
+		return 0
+	}
+
+	for _, num := range numbers {
+		sum += num
+	}
+	return float64(sum) / float64(len(numbers))
+}
+
+func calculateStandardDeviation(numbers []int) float64 {
+	var standardDeviation float64
+	mean := calculateMean(numbers)
+
+	for _, num := range numbers {
+		standardDeviation += math.Pow(float64(num)-mean, 2)
+	}
+
+	return math.Sqrt(standardDeviation / float64(len(numbers)))
 }
 
 func randomMeanHandler(c *gin.Context) {
@@ -19,7 +75,29 @@ func randomMeanHandler(c *gin.Context) {
 				"message": "Invalid query params. Please check your inputs"})
 		return
 	}
-	c.String(http.StatusOK, "Requests Done!")
+
+	httpClient := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	baseUrl, _ := url.Parse(RandomIntegerServiceUrl)
+
+	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
+
+	response, _ := httpClient.Get(baseUrl.String())
+
+	//defer response.Body.Close()
+	body, _ := ioutil.ReadAll(response.Body)
+	numbers, err := convertPlainResponseToIntArray(body)
+	if err != nil {
+		c.String(http.StatusBadGateway, string("NIE DZIALA"))
+		return
+	}
+	standardDeviation := calculateStandardDeviation(numbers)
+	c.JSON(http.StatusOK, gin.H{
+		"sttdev": math.Floor(standardDeviation*100) / 100,
+		"data":   numbers,
+	})
 }
 
 func main() {
