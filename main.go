@@ -136,10 +136,13 @@ func getNumbers(ctx context.Context, baseUrl *url.URL, defaultChannel chan Stand
 func randomMeanHandler(c *gin.Context) {
 	randomMeanQueryParams := RandomMeanQueryParams{}
 	if err := c.ShouldBindQuery(&randomMeanQueryParams); err != nil {
+		fmt.Println(err)
 		c.AbortWithStatusJSON(http.StatusBadRequest,
 			gin.H{
-				"error":   "QUERY_PARAMS_ERROR",
-				"message": "Invalid query params. Please check your inputs"})
+				"error": "QUERY_PARAMS_ERROR",
+				"message": "Invalid query params. Requests and length query parameters are required. " +
+					"Requests must be an integer value in [1,1000] interval " +
+					"and length must be integer value in [1,10000] interval"})
 		return
 	}
 
