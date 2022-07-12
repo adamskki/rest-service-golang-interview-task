@@ -72,7 +72,7 @@ func calculateStandardDeviation(numbers []int) float64 {
 		standardDeviation += math.Pow(float64(num)-mean, 2)
 	}
 
-	return math.Sqrt(standardDeviation / float64(len(numbers)))
+	return math.Round(math.Sqrt(standardDeviation/float64(len(numbers)))*100) / 100
 }
 
 func isTimeoutError(err error) bool {
@@ -187,5 +187,5 @@ func randomMeanHandler(c *gin.Context) {
 func main() {
 	router := gin.Default()
 	router.GET("/random/mean", randomMeanHandler)
-	router.Run("localhost:8090")
+	router.Run(":8090")
 }
