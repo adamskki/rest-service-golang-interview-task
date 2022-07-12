@@ -19,8 +19,8 @@ import (
 const RandomIntegerServiceUrl = "https://www.random.org/integers/"
 
 type RandomMeanQueryParams struct {
-	Requests int  `form:"requests" binding:"required,gte=0,lte=1000"`
-	Length   uint `form:"length" binding:"required"`
+	Requests int `form:"requests" binding:"required,gte=0,lte=1000"`
+	Length   int `form:"length" binding:"required,gte=0,lte=10000"`
 }
 
 type StandardDeviation struct {
