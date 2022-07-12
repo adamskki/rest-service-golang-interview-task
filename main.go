@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"io/ioutil"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -72,16 +76,49 @@ func calculateStandardDeviation(numbers []int) float64 {
 	return math.Sqrt(standardDeviation / float64(len(numbers)))
 }
 
-func getNumbers(baseUrl *url.URL, defaultChannel chan StandardDeviation, errorChannel chan error) {
-	httpClient := &http.Client{
-		Timeout: time.Second * 10,
-	}
+func isTimeoutError(err error) bool {
+	e, ok := err.(net.Error)
+	return ok && e.Timeout()
+}
 
-	response, err := httpClient.Get(baseUrl.String())
+func getNumbers(ctx context.Context, baseUrl *url.URL, defaultChannel chan StandardDeviation, errorChannel chan error) {
+	req, err := http.NewRequest("GET", baseUrl.String(), nil)
+
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println("Creating requests error", err)
+		errorChannel <- err
 		return
 	}
+
+	httpClient := &http.Client{
+		Timeout: time.Second * 5,
+	}
+
+	response, err := httpClient.Do(req.WithContext(ctx))
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Println("REQUEST SUCCESSFUL CANCELED")
+		} else if isTimeoutError(err) {
+			errorChannel <- errors.New("RandomORG request timeout")
+		} else {
+			fmt.Printf("error making request: %v\n", err)
+			errorChannel <- errors.New("RandomORG request timeout")
+		}
+		return
+	}
+
+	if response.StatusCode != 200 {
+		errorChannel <- errors.New("Service RandomORG is not available")
+		fmt.Println("Server is not available!!!")
+		return
+	}
+
+	//response, err := httpClient.Get(baseUrl.String())
+	//if err != nil {
+	//	errorChannel <- err
+	//	log.Fatal(err)
+	//}
 
 	//defer response.Body.Close()
 	body, _ := ioutil.ReadAll(response.Body)
@@ -111,19 +148,36 @@ func randomMeanHandler(c *gin.Context) {
 	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
 
 	defaultChannel := make(chan StandardDeviation)
-	errorChannel := make(chan error)
+	errorChannel := make(chan error, randomMeanQueryParams.Requests)
+
+	ctx := context.Background()
+
+	ctx, cancel := context.WithCancel(ctx)
+
+	defer cancel()
 
 	for i := 0; i < randomMeanQueryParams.Requests; i++ {
-		go getNumbers(baseUrl, defaultChannel, errorChannel)
+		go getNumbers(ctx, baseUrl, defaultChannel, errorChannel)
 	}
 
 	var standardDeviations []StandardDeviation
 	var allNumbers []int
 
 	for i := 0; i < randomMeanQueryParams.Requests; i++ {
-		stddev := <-defaultChannel
-		standardDeviations = append(standardDeviations, stddev)
-		allNumbers = append(allNumbers, stddev.Data...)
+		select {
+		case err := <-errorChannel:
+			fmt.Println("Errors occurs", err)
+			cancel()
+			c.JSON(http.StatusInternalServerError, err)
+			return
+		case stddev := <-defaultChannel:
+			standardDeviations = append(standardDeviations, stddev)
+			allNumbers = append(allNumbers, stddev.Data...)
+		case <-c.Done():
+			log.Print("Client canceled request")
+			cancel()
+		}
+
 	}
 
 	standardDeviations = append(
