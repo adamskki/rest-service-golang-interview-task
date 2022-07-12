@@ -81,7 +81,7 @@ func isTimeoutError(err error) bool {
 	return ok && e.Timeout()
 }
 
-func getNumbers(ctx context.Context, baseUrl *url.URL, defaultChannel chan StandardDeviation, errorChannel chan error) {
+func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL, defaultChannel chan StandardDeviation, errorChannel chan error) {
 	req, err := http.NewRequest("GET", baseUrl.String(), nil)
 
 	if err != nil {
@@ -136,7 +136,6 @@ func getNumbers(ctx context.Context, baseUrl *url.URL, defaultChannel chan Stand
 func randomMeanHandler(c *gin.Context) {
 	randomMeanQueryParams := RandomMeanQueryParams{}
 	if err := c.ShouldBindQuery(&randomMeanQueryParams); err != nil {
-		fmt.Println(err)
 		c.AbortWithStatusJSON(http.StatusBadRequest,
 			gin.H{
 				"error": "QUERY_PARAMS_ERROR",
@@ -147,31 +146,31 @@ func randomMeanHandler(c *gin.Context) {
 	}
 
 	baseUrl, _ := url.Parse(RandomIntegerServiceUrl)
-
 	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
 
 	defaultChannel := make(chan StandardDeviation)
 	errorChannel := make(chan error, randomMeanQueryParams.Requests)
 
 	ctx := context.Background()
-
 	ctx, cancel := context.WithCancel(ctx)
-
 	defer cancel()
-
-	for i := 0; i < randomMeanQueryParams.Requests; i++ {
-		go getNumbers(ctx, baseUrl, defaultChannel, errorChannel)
-	}
 
 	var standardDeviations []StandardDeviation
 	var allNumbers []int
 
 	for i := 0; i < randomMeanQueryParams.Requests; i++ {
+		go getStandardDeviationFromRandomNumbers(ctx, baseUrl, defaultChannel, errorChannel)
+	}
+
+	for i := 0; i < randomMeanQueryParams.Requests; i++ {
 		select {
 		case err := <-errorChannel:
-			fmt.Println("Errors occurs", err)
+			log.Print("Errors occurs in worker goroutine, cancelling other requests")
 			cancel()
-			c.JSON(http.StatusInternalServerError, err)
+			c.AbortWithStatusJSON(http.StatusInternalServerError,
+				gin.H{
+					"error":   "RANDOM_ORG_ACCESS_ERROR",
+					"message": err.Error()})
 			return
 		case stddev := <-defaultChannel:
 			standardDeviations = append(standardDeviations, stddev)
