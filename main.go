@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"io/ioutil"
 	"log"
@@ -85,7 +84,7 @@ func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL
 	req, err := http.NewRequest("GET", baseUrl.String(), nil)
 
 	if err != nil {
-		fmt.Println("Creating requests error", err)
+		log.Print("Creating request error", err)
 		errorChannel <- err
 		return
 	}
@@ -97,40 +96,35 @@ func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL
 	response, err := httpClient.Do(req.WithContext(ctx))
 
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			fmt.Println("REQUEST SUCCESSFUL CANCELED")
-		} else if isTimeoutError(err) {
-			errorChannel <- errors.New("RandomORG request timeout")
+		if isTimeoutError(err) {
+			errorChannel <- errors.New("server faced timeout error while accessing RANDOM.ORG service")
 		} else {
-			fmt.Printf("error making request: %v\n", err)
-			errorChannel <- errors.New("RandomORG request timeout")
+			errorChannel <- errors.New("server faced error while accessing RANDOM.ORG service")
 		}
 		return
 	}
 
 	if response.StatusCode != 200 {
-		errorChannel <- errors.New("Service RandomORG is not available")
-		fmt.Println("Server is not available!!!")
+		errorChannel <- errors.New("server faced error error while accessing RANDOM.ORG service: " +
+			http.StatusText(response.StatusCode))
 		return
 	}
 
-	//response, err := httpClient.Get(baseUrl.String())
-	//if err != nil {
-	//	errorChannel <- err
-	//	log.Fatal(err)
-	//}
+	defer response.Body.Close()
+	body, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		errorChannel <- errors.New("server faced error while reading body response from RANDOM.ORG service")
+		return
+	}
 
-	//defer response.Body.Close()
-	body, _ := ioutil.ReadAll(response.Body)
-	numbers, _ := convertPlainResponseToIntArray(body)
+	numbers, err := convertPlainResponseToIntArray(body)
+
+	if err != nil {
+		errorChannel <- errors.New("server faced error while parsing body response from RANDOM.ORG service")
+		return
+	}
 
 	defaultChannel <- StandardDeviation{calculateStandardDeviation(numbers), numbers}
-
-	//if response.StatusCode != 200 {
-	//	c.JSON(http.StatusServiceUnavailable, gin.H{
-	//		"Error": "Random Org is not available",
-	//	})
-	//}
 }
 
 func randomMeanHandler(c *gin.Context) {
