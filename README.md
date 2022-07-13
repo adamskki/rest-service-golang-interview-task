@@ -1,4 +1,4 @@
-# Rest service in go- recruitment task
+# Rest service in go - recruitment task
 
 Rest service expose one HTTP endpoint supporting the following GET operation:
 ```
