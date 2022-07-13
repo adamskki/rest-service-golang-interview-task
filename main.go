@@ -27,6 +27,7 @@ type StandardDeviation struct {
 	Data   []int   `json:"data"`
 }
 
+// Functions which is responsible for converting plain response from RANDOMORD API to array of integers values
 func convertPlainResponseToIntArray(responseBody []byte) ([]int, error) {
 	var integersArray []int
 	for _, num := range strings.Fields(string(responseBody)) {
@@ -39,6 +40,7 @@ func convertPlainResponseToIntArray(responseBody []byte) ([]int, error) {
 	return integersArray, nil
 }
 
+// Adding required query params to RANDOMORG API url
 func addRequiredQueryParamsToUrl(baseUrl *url.URL, numLength string) {
 	queryParams := url.Values{}
 	queryParams.Add("num", numLength)
@@ -75,7 +77,7 @@ func calculateStandardDeviation(numbers []int) float64 {
 	return math.Round(math.Sqrt(standardDeviation/float64(len(numbers)))*100) / 100
 }
 
-func isTimeoutError(err error) bool {
+func isTimeout(err error) bool {
 	e, ok := err.(net.Error)
 	return ok && e.Timeout()
 }
@@ -89,14 +91,16 @@ func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL
 		return
 	}
 
+	// Setting 5 seconds timeout on http request
 	httpClient := &http.Client{
 		Timeout: time.Second * 5,
 	}
 
+	// Sending http requests with cancellation context
 	response, err := httpClient.Do(req.WithContext(ctx))
 
 	if err != nil {
-		if isTimeoutError(err) {
+		if isTimeout(err) {
 			errorChannel <- errors.New("server faced timeout error while accessing RANDOM.ORG service")
 		} else {
 			errorChannel <- errors.New("server faced error while accessing RANDOM.ORG service")
@@ -111,6 +115,8 @@ func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL
 	}
 
 	defer response.Body.Close()
+
+	// Reading response body
 	body, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		errorChannel <- errors.New("server faced error while reading body response from RANDOM.ORG service")
@@ -124,11 +130,13 @@ func getStandardDeviationFromRandomNumbers(ctx context.Context, baseUrl *url.URL
 		return
 	}
 
+	// Returning results
 	defaultChannel <- StandardDeviation{calculateStandardDeviation(numbers), numbers}
 }
 
 func randomMeanHandler(c *gin.Context) {
 	randomMeanQueryParams := RandomMeanQueryParams{}
+	// Query Params validation
 	if err := c.ShouldBindQuery(&randomMeanQueryParams); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest,
 			gin.H{
@@ -139,25 +147,32 @@ func randomMeanHandler(c *gin.Context) {
 		return
 	}
 
+	// Preparing URL for external API call
 	baseUrl, _ := url.Parse(RandomIntegerServiceUrl)
-	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(int(randomMeanQueryParams.Length)))
+	addRequiredQueryParamsToUrl(baseUrl, strconv.Itoa(randomMeanQueryParams.Length))
 
+	// Channels which are used to communicate with child goroutines
 	defaultChannel := make(chan StandardDeviation)
 	errorChannel := make(chan error, randomMeanQueryParams.Requests)
 
+	// Context with cancel which is used to interrupt http requests send by child goroutines
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Variables which holds results from child goroutines
 	var standardDeviations []StandardDeviation
 	var allNumbers []int
 
+	// Creating goroutines in order to make concurrent http requests to RANDOMORG API
 	for i := 0; i < randomMeanQueryParams.Requests; i++ {
 		go getStandardDeviationFromRandomNumbers(ctx, baseUrl, defaultChannel, errorChannel)
 	}
 
+	// Gathering results from child goroutines
 	for i := 0; i < randomMeanQueryParams.Requests; i++ {
 		select {
+		// When an error occurs in one child goroutine, processing in others is also interrupted
 		case err := <-errorChannel:
 			log.Print("Errors occurs in worker goroutine, cancelling other requests")
 			cancel()
@@ -166,9 +181,11 @@ func randomMeanHandler(c *gin.Context) {
 					"error":   "RANDOM_ORG_ACCESS_ERROR",
 					"message": err.Error()})
 			return
+		//	Gathering standard deviation from child goroutines
 		case stddev := <-defaultChannel:
 			standardDeviations = append(standardDeviations, stddev)
 			allNumbers = append(allNumbers, stddev.Data...)
+		//	Case when client cancel request
 		case <-c.Done():
 			log.Print("Client canceled request")
 			cancel()
@@ -176,11 +193,13 @@ func randomMeanHandler(c *gin.Context) {
 
 	}
 
+	// Calculating and adding last standard deviation from all random numbers
 	standardDeviations = append(
 		standardDeviations,
 		StandardDeviation{calculateStandardDeviation(allNumbers), allNumbers},
 	)
 
+	// Returning final result
 	c.JSON(http.StatusOK, standardDeviations)
 }
 
